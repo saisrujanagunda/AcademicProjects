@@ -1,0 +1,732 @@
+---
+title: "CDA_Final Project"
+author: "Sai Srujana Gunda"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+```{r}
+
+# libraries
+
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(caTools)
+library(ROCR)
+library(ggplot2)
+library(class)
+library(rattle)
+library(pROC)
+library(randomForest)
+library(e1071)
+
+```
+
+```{r}
+# read the csv file
+fdd <- read.csv("C:/MS_Fall/Data analysis/Final Project/creditcard.csv")
+```
+
+# Data Exploration
+
+```{r}
+head(fdd)
+```
+
+```{r}
+tail(fdd)
+```
+
+```{r}
+colSums(is.na(fdd))
+```
+
+```{r}
+summary(fdd)
+```
+
+
+```{r}
+str(fdd)
+```
+
+# count of Amount
+
+```{r}
+# Get the counts of unique values in the 'Class' column
+class_counts <- table(fdd$Class)
+
+# Print the counts
+print(class_counts)
+```
+
+
+```{r}
+# Create a count plot
+ggplot(fdd, aes(x = factor(Class))) +
+  geom_bar() +
+  labs(title = "Class Distribution",
+       x = "Class",
+       y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+# Boxplot
+ggplot(fdd, aes(y = Amount)) +
+  geom_boxplot(color = "steelblue", fill = "lightgray") +
+  labs(y = "Amount") +
+  theme_minimal()
+```
+
+# Time
+```{r}
+
+# Distribution of Time with y-axis limits
+ggplot(fdd, aes(x = Time)) +
+  geom_histogram(binwidth = 1, fill = "skyblue") +
+  labs(
+    x = "Time",
+    y = "Density",
+    title = "Distribution of Time"
+  ) 
+
+```
+
+# finding correlation between the data 
+
+```{r}
+# Assuming 'data' is your data frame
+corr_matrix <- cor(fdd)
+
+# Create a correlation matrix heatmap
+corrplot(corr_matrix, method = "color", type = "upper", tl.col = "black", tl.srt = 90)
+```
+
+# analysing the "Amount"
+
+```{r}
+
+fraud <- fdd[fdd$Class == 1, ]
+valid <- fdd[fdd$Class == 0, ]
+
+outlierFraction <- nrow(fraud) / nrow(valid)
+cat("Outlier Fraction: ", outlierFraction, "\n")
+cat("Fraud Cases: ", nrow(fraud), "\n")
+cat("Valid Transactions: ", nrow(valid), "\n")
+
+```
+
+```{r}
+# Assuming 'fraud' is your data frame containing fraudulent transactions
+cat("Minimum Amount: ", min(fraud$Amount), "\n")
+cat("1st Quartile: ", quantile(fraud$Amount, 0.25), "\n")
+cat("Median: ", median(fraud$Amount), "\n")
+cat("Mean: ", mean(fraud$Amount), "\n")
+cat("3rd Quartile: ", quantile(fraud$Amount, 0.75), "\n")
+cat("Maximum Amount: ", max(fraud$Amount), "\n")
+
+```
+
+```{r}
+# Assuming 'valid' is your data frame containing valid transactions
+cat("Minimum Amount: ", min(valid$Amount), "\n")
+cat("1st Quartile: ", quantile(valid$Amount, 0.25), "\n")
+cat("Median: ", median(valid$Amount), "\n")
+cat("Mean: ", mean(valid$Amount), "\n")
+cat("3rd Quartile: ", quantile(valid$Amount, 0.75), "\n")
+cat("Maximum Amount: ", max(valid$Amount), "\n")
+
+```
+
+Mean of Fraud >> mean of valid transactions
+
+
+# comparing mean of all features grouping by Class
+
+```{r}
+# Calculate the mean for each group defined by 'Class'
+mean_by_class <- aggregate(. ~ Class, data = fdd, FUN = mean)
+mean_by_class
+```
+
+
+---
+
+# undersampling 492 - 492
+
+```{r}
+valid_sample_492 <- valid[sample(nrow(valid), 492), ]
+```
+
+```{r}
+# Create a new data frame by combining 'fraud' and 'valid_sample_492'
+fdd_1 <- rbind(fraud, valid_sample_492)
+```
+
+```{r}
+# Get the counts of unique values in the 'Class' column
+combined_class_counts <- table(fdd_1$Class)
+
+# Print the counts
+print(combined_class_counts)
+```
+
+```{r}
+# Calculate the mean for each group defined by 'Class' in the new data
+mean_by_class <- aggregate(. ~ Class, data = fdd_1, FUN = mean)
+mean_by_class
+```
+
+## splitting the data 
+
+```{r}
+
+# Independent and Dependent Features Split
+X <- fdd_1[, -ncol(fdd_1)]  # All columns except the last one
+Y <- fdd_1[, ncol(fdd_1)]   # Only the last column
+
+library(caTools)
+
+# Train-Test Split
+set.seed(123)  # Setting seed for reproducibility
+split <- sample.split(Y, SplitRatio = 0.8)
+X_train <- subset(X, split == TRUE)
+X_test <- subset(X, split == FALSE)
+Y_train <- subset(Y, split == TRUE)  
+Y_test <- subset(Y, split == FALSE)  
+
+```
+
+```{r}
+dim(X_train)
+dim(X_test)
+```
+
+## using logistic regression
+
+```{r}
+
+# Train Logistic Regression model
+model_1 <- glm(Y_train ~ ., data = cbind(X_train, Y_train), family = binomial)
+
+# Predict on the test set
+predictions_lr1 <- predict(model_1, newdata = cbind(X_test, Y_test), type = "response")
+
+# Convert predicted probabilities to binary predictions
+predicted_classes <- ifelse(predictions_lr1 > 0.5, 1, 0)
+
+# Create a confusion matrix
+conf_matrix <- confusionMatrix(data = factor(predicted_classes), reference = factor(Y_test))
+
+# Print the confusion matrix
+print(conf_matrix)
+
+# Extract and print the accuracy
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste("Accuracy:", accuracy))
+
+```
+
+## knn 
+
+```{r}
+# Load necessary libraries
+library(caret)
+
+# Define the training control
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Define the values of k to try
+k_values <- 1:40
+
+# Train the KNN model using cross-validation
+knn_cv <- train(
+  x = as.matrix(X_train),
+  y = as.factor(Y_train),
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = data.frame(k = k_values)
+)
+
+# Print the results
+print(knn_cv)
+
+# Get the best k value
+best_k <- knn_cv$bestTune$k
+print(paste("Best k:", best_k))
+
+# Make predictions on the validation set using the best k
+y_pred_knn <- predict(knn_cv, newdata = as.matrix(X_test))
+
+# Classification report
+conf_matrix_knn <- confusionMatrix(table(y_pred_knn, as.factor(Y_test)))
+print(conf_matrix_knn)
+
+```
+
+## naive bayes
+
+```{r}
+
+# Fit Naive Bayes
+n_bayes_fit <- naiveBayes(formula = Y_train ~ ., data = cbind(X_train, Y_train))
+#print(n_bayes_fit)
+
+# Make predictions on the test set
+pred_nbayes <- predict(n_bayes_fit, newdata = cbind(X_test, Y_test))
+
+# Calculate accuracy
+accuracy_nbayes <- mean(pred_nbayes == Y_test)
+print(paste("Accuracy:", accuracy_nbayes))
+
+```
+
+## curve
+  
+```{r}
+
+# Create a ROC curve
+roc_lr_1 <- roc(Y_test, predictions_lr1)
+
+# Create a ROC curve for KNN
+roc_knn_1 <- roc(Y_test, as.numeric(y_pred_knn))
+
+# Create a ROC curve for Naive Bayes
+roc_nbayes_1 <- roc(Y_test, as.numeric(pred_nbayes))
+
+# Plot all ROC curves on the same plot
+plot(roc_lr_1, col = "blue", lwd = 2, main = "ROC Curves for Different Models")
+lines(roc_knn_1, col = "red", lwd = 2)
+lines(roc_nbayes_1, col = "green", lwd = 2)
+
+# Add diagonal reference line for comparison
+abline(a = 0, b = 1, col = "black", lty = 2, lwd = 2)
+
+# Add legend
+legend("bottomright", legend = c("Logistic Regression", paste("KNN (k =", best_k, ")", sep = ""), "Naive Bayes"),
+       col = c("blue", "red", "green"), lwd = 2)
+
+# Calculate and print the AUC for each model
+auc_lr_1 <- auc(roc_lr_1)
+auc_knn_1 <- auc(roc_knn_1)
+auc_nbayes_1 <- auc(roc_nbayes_1)
+
+print(paste("AUC Logistic Regression:", auc_lr_1))
+print(paste("AUC KNN:", auc_knn_1))
+print(paste("AUC Naive Bayes:", auc_nbayes_1))
+
+```
+
+---
+
+# undersampling  8000 - 492
+
+```{r}
+
+# Filter non-fraudulent transactions
+non_fraud_8000 <- fdd[fdd$Class == 0, ][sample(1:nrow(fdd[fdd$Class == 0, ]), 8000), ]
+
+# Display the number of non-fraudulent and fraudulent samples
+print(c(nrow(non_fraud_8000), nrow(fraud)))
+
+```
+
+```{r}
+
+# Combine non-fraudulent and fraudulent samples, shuffle the data, and reset the index
+fdd_2 <- rbind(non_fraud_8000, fraud)[sample(1:nrow(rbind(non_fraud_8000, fraud))), , drop = FALSE]
+fdd_2 <- fdd_2[order(runif(nrow(fdd_2))), ]
+
+# Extract features and target variable
+x <- fdd_2[, !names(fdd_2) %in% "Class"]
+y <- fdd_2$Class
+
+```
+
+
+```{r}
+
+library(caTools)
+
+# Train-Test Split
+set.seed(123)  # Setting seed for reproducibility
+split <- sample.split(y, SplitRatio = 0.8)
+x_train <- subset(x, split == TRUE)
+x_test <- subset(x, split == FALSE)
+y_train <- subset(y, split == TRUE)  
+y_test <- subset(y, split == FALSE)  
+
+```
+
+```{r}
+
+dim(x_train)
+dim(x_test)
+
+```
+
+## using logistic regression (8000 - 492 sample)
+
+```{r}
+
+# Train Logistic Regression model
+model_2 <- glm(y_train ~ ., data = cbind(x_train, y_train), family = binomial)
+
+# Predict on the test set
+predictions_lr2 <- predict(model_2, newdata = cbind(x_test, y_test), type = "response")
+
+# Convert predicted probabilities to binary predictions
+predicted_classes_2 <- ifelse(predictions_lr2 > 0.5, 1, 0)
+
+# Create a confusion matrix
+conf_matrix_2 <- confusionMatrix(data = factor(predicted_classes_2), reference = factor(y_test))
+
+# Print the confusion matrix
+print(conf_matrix_2)
+
+# Extract and print the accuracy
+accuracy_2 <- conf_matrix_2$overall["Accuracy"]
+print(paste("Accuracy:", accuracy_2))
+
+```
+
+I have tried increasing the sample size from 2000 to 8000 and the accuracy kept increasing from 96 to 98 percent.
+
+## knn
+
+```{r}
+
+# Define the training control
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Define the values of k to try
+k_values_2 <- 1:10
+
+# Train the KNN model using cross-validation
+knn_cv_2 <- train(
+  x = as.matrix(x_train),
+  y = as.factor(y_train),
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = data.frame(k = k_values_2)
+)
+
+# Print the results
+print(knn_cv_2)
+
+# Get the best k value
+best_k_2 <- knn_cv_2$bestTune$k
+print(paste("Best k:", best_k_2))
+
+# Make predictions on the validation set using the best k
+y_pred_knn_2 <- predict(knn_cv_2, newdata = as.matrix(x_test))
+
+# Classification report
+conf_matrix_knn_2 <- confusionMatrix(table(y_pred_knn_2, as.factor(y_test)))
+print(conf_matrix_knn_2)
+
+```
+
+## naive bayes
+
+```{r}
+
+# Fit Naive Bayes
+n_bayes_fit_8000 <- naiveBayes(y_train ~ ., data = cbind(x_train, y_train))
+#print(n_bayes_fit_8000)
+
+# Make predictions on the test set
+pred_nbayes_8000 <- predict(n_bayes_fit_8000, newdata = cbind(x_test, y_test))
+
+# Calculate accuracy
+accuracy_nbayes_8000 <- mean(pred_nbayes_8000 == y_test)
+print(paste("Accuracy:", accuracy_nbayes_8000))
+
+```
+
+## curve
+  
+```{r}
+
+# Create a ROC curve
+roc_lr_2 <- roc(y_test, predictions_lr2)
+
+# Create a ROC curve for KNN
+roc_knn_2 <- roc(y_test, as.numeric(y_pred_knn_2))
+
+# Create a ROC curve for Naive Bayes
+roc_nbayes_2 <- roc(y_test, as.numeric(pred_nbayes_8000))
+
+# Plot all ROC curves on the same plot
+plot(roc_lr_2, col = "blue", lwd = 2, main = "ROC Curves for Different Models")
+lines(roc_knn_2, col = "red", lwd = 2)
+lines(roc_nbayes_2, col = "green", lwd = 2)
+
+# Add diagonal reference line for comparison
+abline(a = 0, b = 1, col = "black", lty = 2, lwd = 2)
+
+# Add legend
+legend("bottomright", legend = c("Logistic Regression", paste("KNN (k =", best_k, ")", sep = ""), "Naive Bayes"),
+       col = c("blue", "red", "green"), lwd = 2)
+
+# Calculate and print the AUC for each model
+auc_lr_2 <- auc(roc_lr_2)
+auc_knn_2 <- auc(roc_knn_2)
+auc_nbayes_2 <- auc(roc_nbayes_2)
+
+print(paste("AUC Logistic Regression:", auc_lr_2))
+print(paste("AUC KNN:", auc_knn_2))
+print(paste("AUC Naive Bayes:", auc_nbayes_2))
+
+```
+
+
+---
+
+# normalizing the "amount" feature
+
+```{r}
+
+fdd_3 <- fdd_2
+fdd_3$Amount <- scale(fdd_2$Amount)
+
+# Print the first few rows to verify the changes
+head(fdd_3)
+
+```
+
+
+```{r}
+
+# Extract features and target variable
+x1 <- fdd_3[, !names(fdd_3) %in% "Class"]
+y1 <- fdd_2$Class
+
+```
+
+
+```{r}
+
+library(caTools)
+
+# Train-Test Split
+set.seed(123)  # Setting seed for reproducibility
+split <- sample.split(y1, SplitRatio = 0.8)
+x_train_1 <- subset(x1, split == TRUE)
+x_test_1 <- subset(x1, split == FALSE)
+y_train_1 <- subset(y1, split == TRUE)  
+y_test_1 <- subset(y1, split == FALSE)  
+
+```
+
+```{r}
+
+dim(x_train_1)
+dim(x_test_1)
+
+```
+
+## logistic regression with the normalized amount
+
+```{r}
+
+# Train Logistic Regression model
+model_3 <- glm(y_train_1 ~ ., data = cbind(x_train_1, y_train_1), family = binomial)
+
+# Predict on the test set
+predictions_3 <- predict(model_3, newdata = cbind(x_test_1, y_test_1), type = "response")
+
+# Convert predicted probabilities to binary predictions
+predicted_classes_3 <- ifelse(predictions_3 > 0.5, 1, 0)
+
+# Create a confusion matrix
+conf_matrix_3 <- confusionMatrix(data = factor(predicted_classes_3), reference = factor(y_test_1))
+
+# Print the confusion matrix
+print(conf_matrix_3)
+
+# Extract and print the accuracy
+accuracy_3 <- conf_matrix_3$overall["Accuracy"]
+print(paste("Accuracy:", accuracy_3))
+
+
+```
+
+There is no big difference found in the accuracy after normalizing the feature "Amount"
+
+## knn
+
+```{r}
+
+# Define the training control
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Define the values of k to try
+k_values_3 <- 1:10
+
+# Train the KNN model using cross-validation
+knn_cv_3 <- train(
+  x = as.matrix(x_train_1),
+  y = as.factor(y_train_1),
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = data.frame(k = k_values_3)
+)
+
+# Print the results
+print(knn_cv_3)
+
+# Get the best k value
+best_k_3 <- knn_cv_3$bestTune$k
+print(paste("Best k:", knn_cv_3))
+
+# Make predictions on the validation set using the best k
+y_pred_knn_3 <- predict(knn_cv_3, newdata = as.matrix(x_test_1))
+
+# Classification report
+conf_matrix_knn_3 <- confusionMatrix(table(y_pred_knn_3, as.factor(y_test_1)))
+print(conf_matrix_knn_3)
+
+```
+
+
+## naive bayes
+
+```{r}
+
+# Fit Naive Bayes
+n_bayes_fit_na <- naiveBayes(y_train_1 ~ ., data = cbind(x_train_1, y_train_1))
+#print(n_bayes_fit_na)
+
+# Make predictions on the test set
+pred_nbayes_na <- predict(n_bayes_fit_na, newdata = cbind(x_test_1, y_test_1))
+
+# Calculate accuracy
+accuracy_nbayes_na <- mean(pred_nbayes_na == y_test_1)
+print(paste("Accuracy:", accuracy_nbayes_na))
+
+```
+
+---
+
+# logistic regression for the whole dataset fdd
+
+```{r}
+
+fdd <- read.csv("C:/MS_Fall/Data analysis/Final Project/creditcard.csv")
+
+# Extract features and target variable
+x <- fdd[, !names(fdd) %in% "Class"]
+y <- fdd$Class
+
+```
+
+
+```{r}
+
+library(caTools)
+
+# Train-Test Split
+set.seed(123)  # Setting seed for reproducibility
+split <- sample.split(y, SplitRatio = 0.8)
+x_train_final <- subset(x, split == TRUE)
+x_test_final <- subset(x, split == FALSE)
+y_train_final <- subset(y, split == TRUE)  
+y_test_final <- subset(y, split == FALSE)  
+
+```
+
+```{r}
+
+dim(x_train_final)
+dim(x_test_final)
+
+```
+
+## using logistic regression
+
+```{r}
+
+# Train Logistic Regression model
+model_final <- glm(y_train_final ~ ., data = cbind(x_train_final, y_train_final), family = binomial)
+
+# Predict on the test set
+predictions <- predict(model_final, newdata = cbind(x_test_final, y_test_final), type = "response")
+
+# Convert predicted probabilities to binary predictions
+predicted_classes_final <- ifelse(predictions > 0.5, 1, 0)
+
+# Create a confusion matrix
+conf_matrix_final <- confusionMatrix(data = factor(predicted_classes_final), reference = factor(y_test_final))
+
+# Print the confusion matrix
+print(conf_matrix_final)
+
+# Extract and print the accuracy
+accuracy_final <- conf_matrix_final$overall["Accuracy"]
+print(paste("Accuracy:", accuracy_final))
+
+```
+
+## knn
+
+```{r}
+
+# Define the training control
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Define the values of k to try
+k_values_final <- 1:5
+
+# Train the KNN model using cross-validation
+knn_cv_final <- train(
+  x = as.matrix(x_train_final),
+  y = as.factor(y_train_final),
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = data.frame(k = k_values_final)
+)
+
+# Print the results
+print(knn_cv_final)
+
+# Get the best k value
+best_k_final <- knn_cv_final$bestTune$k
+print(paste("Best k:", knn_cv_final))
+
+# Make predictions on the validation set using the best k
+y_pred_knn_final <- predict(knn_cv_final, newdata = as.matrix(x_test_1))
+
+# Classification report
+conf_matrix_knn_final <- confusionMatrix(table(y_pred_knn_final, as.factor(y_test_1)))
+print(conf_matrix_knn_final)
+
+```
+
+## naive bayes
+
+```{r}
+
+# Fit Naive Bayes
+n_bayes_fit_final <- naiveBayes(y_train_final ~ ., data = cbind(x_train_final, y_train_final))
+#print(n_bayes_fit_8000)
+
+# Make predictions on the test set
+pred_nbayes_final <- predict(n_bayes_fit_final, newdata = cbind(x_train_final, y_train_final))
+
+# Calculate accuracy
+accuracy_nbayes_final <- mean(pred_nbayes_final == y_train_final)
+print(paste("Accuracy:", accuracy_nbayes_final))
+
+```
+
+
+
